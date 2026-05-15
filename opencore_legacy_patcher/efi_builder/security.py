@@ -18,17 +18,27 @@ from ..datasets import (
 
 # T2 Mac models that use Intel UHD 630 and require connector-less
 # ig-platform-id injection to avoid APFS volume group race condition
-# on macOS Tahoe and later.
+# on macOS Tahoe and later. (Coffee Lake GT2)
 _T2_UHD630_MODELS = {
     "MacBookPro15,1",  # 15-inch 2018
     "MacBookPro15,3",  # 15-inch 2019 (Vega)
     "MacBookPro16,1",  # 16-inch 2019
     "MacBookPro16,4",  # 16-inch 2019 (CTO)
+    "Macmini8,1",      # Mac mini 2018
+}
+
+# T2 Mac models that use Intel UHD 617 and require graphics injection
+# for stability. (Amber Lake Y GT2)
+_T2_UHD617_MODELS = {
     "MacBookAir8,1",   # Air 2018
     "MacBookAir8,2",   # Air 2019
-    "MacBookAir9,1",   # Air 2020
-    "Macmini8,1",      # Mac mini 2018
+}
+
+# T2 Mac models that do not have an Intel iGPU, or where iGPU injection
+# is not required/recommended.
+_T2_NO_IGPU_MODELS = {
     "MacPro7,1",       # Mac Pro 2019
+    "iMacPro1,1",      # iMac Pro 2017
 }
 
 
@@ -100,13 +110,21 @@ class BuildSecurity:
         return "T2_CHIP" in self.constants.device_properties.get(self.model, {}).get("Features", [])
 
     def _requires_t2_graphics_injection(self) -> bool:
-        """
-        Return True if this T2 model needs connector-less Intel UHD 630
-        graphics injection to prevent the APFS volume group race condition
-        on macOS Tahoe and later.
-        """
-        return self.model in _T2_UHD630_MODELS
+        """Return True if this T2 model needs Intel graphics injection."""
+        return (self.model in _T2_UHD630_MODELS or self.model in _T2_UHD617_MODELS)
 
+    def _should_skip_t2_graphics_injection(self) -> bool:
+        """Return True if this T2 model should explicitly skip Intel graphics injection."""
+        return self.model in _T2_NO_IGPU_MODELS
+
+    # ------------------------------------------------------------------
+    # Graphics injection helpers
+    # ------------------------------------------------------------------
+
+    def _get_graphics_device_properties_path(self) -> str:
+        """Return the PCI path for the integrated graphics device."""
+        return "PciRoot(0x0)/Pci(0x2,0x0)"
+    
     # ------------------------------------------------------------------
     # Config helpers
     # ------------------------------------------------------------------
@@ -149,26 +167,31 @@ class BuildSecurity:
         models listed in _T2_UHD630_MODELS.
 
         WHY connector-less ig-platform-id 0x3E9B0006 (bytes: 06 00 9B 3E)?
-        -------------------------------------------------------------------
-        macOS Tahoe changed the ordering of APFS volume group initialisation
+        -------------------------------------------------------------------        
+        macOS Tahoe changed the ordering of APFS volume group initialization
         relative to GPU framebuffer enumeration. With a display-connected
-        ig-platform-id (e.g. bytes: 00 00 9B 3E = 0x3E9B0000) the Intel
+        ig-platform-id (e.g., bytes: 00 00 9B 3E = 0x3E9B0000), the Intel
         framebuffer driver probes all connectors during early boot, stalling
         the IOService tree long enough that APFS fails with:
 
-            nx_get_volume_group:669  - volume groups tree is not setup yet
+            nx_get_volume_group:669  - volume groups tree is not set up yet
             getVolumeGroupMountFrom:10003 - failed with error 2
 
         Using ig-platform-id 0x3E9B0006 (bytes: 06 00 9B 3E) tells
         AppleIntelCFLGraphicsFramebuffer to skip connector enumeration at
         boot, allowing APFS volume groups to mount before the GPU resumes
-        display initialisation.
+        display initialization.
 
-        Non-T2 Macs are never affected — this method is only reachable
-        when _is_t2_mac() is True AND the model is in _T2_UHD630_MODELS.
+        Non-T2 Macs are never affected—this method is only reachable
+        when _is_t2_mac() is True AND the the model is in _T2_UHD630_MODELS
+        or _T2_UHD617_MODELS.
         """
+        if self._should_skip_t2_graphics_injection():
+            logging.info(f"- Skipping Intel graphics injection for {self.model} (no iGPU or not required)")
+            return
+
         if not self._requires_t2_graphics_injection():
-            logging.info(f"- Skipping T2 UHD630 graphics injection (model {self.model} not in list)")
+            logging.info(f"- Skipping Intel graphics injection for {self.model} (not in supported iGPU list)")
             return
 
         logging.info(f"- {self.model}: Injecting connector-less UHD630 DeviceProperties (Tahoe fix)")
@@ -185,8 +208,7 @@ class BuildSecurity:
         gfx = self.config["DeviceProperties"]["Add"][graphics_path]
 
         # Connector-less ig-platform-id for Coffee Lake GT2 (UHD 630)
-        # little-endian bytes: 06 00 9B 3E → platform 0x3E9B0006
-        logging.info("  > AAPL,ig-platform-id = 06 00 9B 3E (connector-less)")
+        # little-endian bytes: 06 00 9B 3E → platform 0x3E9B0006 (Connector-less fix for UI Stall)
         gfx["AAPL,ig-platform-id"] = binascii.unhexlify("06009B3E")
 
         # device-id: Intel UHD 630 Coffee Lake GT2, little-endian
@@ -202,6 +224,11 @@ class BuildSecurity:
         logging.info("  > framebuffer-con0-enable = 1, con0-type = 04 (unused/connector-less)")
         gfx["framebuffer-con0-enable"] = binascii.unhexlify("01000000")
         gfx["framebuffer-con0-type"]   = binascii.unhexlify("00040000")
+
+        # เพิ่มหน่วยความจำกราฟิกเพื่อป้องกัน UI Stall ในหน้า Recovery
+        logging.info("  > framebuffer-stolenmem = 19MB, framebuffer-fbmem = 9MB")
+        gfx["framebuffer-stolenmem"]   = binascii.unhexlify("00003001")
+        gfx["framebuffer-fbmem"]       = binascii.unhexlify("00009000")
 
         logging.info("  > T2 UHD630 connector-less injection complete")
 
@@ -234,6 +261,12 @@ class BuildSecurity:
         # NVMe checkpoint timestamp during APFS device_handle init,
         # resolving stall at dev_init:303 on macOS Tahoe (T2 ONLY)
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "nvme_shutdown_timestamp=0")
+        # UI Stall Fixes for MacBookPro15,1 and similar
+        logging.info("  > Adding UI Stall fix boot-args: igfxonln=1, forceRenderStandby=0")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "igfxonln=1")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "igfxnoredir=1")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "forceRenderStandby=0")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "-disable_media_analysis")
         # keepsyms=1             — retain kernel symbols so nx_mount journal
         #                          replay can complete without I/O stall at xid
         # apfs_nvidia_restrict=0 — disable APFS GPU restriction check that
@@ -285,9 +318,9 @@ class BuildSecurity:
                 "Comment": "Increase T2 USB Timeout (UI Stall fix)",
                 "Enabled": True,
                 "Identifier": "com.apple.driver.usb.AppleUSBXHCI",
-                "Find": binascii.unhexlify("BA0A000000"),
-                "Replace": binascii.unhexlify("BAFF000000"),
-                "MinKernel": "25.0.0"
+                "Find": binascii.unhexlify("BA0A000000"),      # 10ms timeout
+                "Replace": binascii.unhexlify("BAFF000000"),   # 255ms timeout (T2 Handshake fix)
+                "MinKernel": "25.0.0"                          # Matches Tahoe Kernel
             })
 
         # 3. Block com.apple.iokit.IOBufferCopyController
@@ -311,8 +344,22 @@ class BuildSecurity:
                 "Comment": "Patch AppleSEPManager panic to return (Tahoe fix)",
                 "Enabled": True,
                 "Identifier": "com.apple.driver.AppleSEPManager",
-                "Find": binascii.unhexlify("4883BFB003000000754F"),
-                "Replace": binascii.unhexlify("C3909090909090909090"),
+                "Find": binascii.unhexlify("4883BFB003000000754F"),   # Check SEPOS status
+                "Replace": binascii.unhexlify("31C0C390909090909090"),# Return Success (0) ทันที
+                "MinKernel": "25.0.0"                                 # Target macOS 26 (Tahoe)
+            })
+
+        # 6. Bypass InternalHubPowerCheck ใน AppleIntelUSBXHC
+        # ป้องกันระบบค้างรอสถานะการจ่ายไฟของ USB Hub บนชิป T2
+        if not patch_exists("Bypass InternalHubPowerCheck (Tahoe fix)"):
+            logging.info("  > Adding InternalHubPowerCheck bypass patch")
+            kernel_patches.append({
+                "Arch": "x86_64",
+                "Comment": "Bypass InternalHubPowerCheck (Tahoe fix)",
+                "Enabled": True,
+                "Identifier": "com.apple.driver.usb.AppleUSBXHCI",
+                "Find": binascii.unhexlify("4183BC24F80100000075"),
+                "Replace": binascii.unhexlify("4183BC24F801000000EB"),
                 "MinKernel": "25.0.0"
             })
 
@@ -445,11 +492,11 @@ class BuildSecurity:
             self.config["Misc"]["Security"]["ApECID"]          = 0
             self.config["Misc"]["Security"]["DmgLoading"]      = "Any"
 
-            # _update_nvram_string is idempotent via token-based dedup —
-            # re-calling here is safe and acts as a final verification step.
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "amfi=0x80")
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxonln=1")             # Force UHD 630 online to prevent UI stall
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxnoredir=1")         # Fix white/frozen screen on 15,1
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "forceRenderStandby=0")    # Prevent GPU power saving UI hang
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-disable_media_analysis") # Reduce background processing
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "agdpmod=vit9696")         # Disable board ID checks
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxfw=2")               # Force Apple Graphics Firmware
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "amfi_check_dyld_policy_at_eval=0")
