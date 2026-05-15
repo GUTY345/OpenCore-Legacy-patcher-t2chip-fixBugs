@@ -437,6 +437,7 @@ class BuildSecurity:
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "amfi=0x80")
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxonln=1")             # Force UHD 630 online to prevent UI stall
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "forceRenderStandby=0")    # Prevent GPU power saving UI hang
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "agdpmod=vit9696")         # Disable board ID checks
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxfw=2")               # Force Apple Graphics Firmware
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "amfi_check_dyld_policy_at_eval=0")
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "ipc_control_port_options=0") # Improve T2 communication stall fix
