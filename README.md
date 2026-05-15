@@ -51,7 +51,7 @@ This repository is dedicated to **bug fixes and maintenance** for the T2-support
 
 ---
 
-## Detailed Change Log
+## Detailed Change Log [EN]
 
 ### 1. Graphics & UI Fixes
 
