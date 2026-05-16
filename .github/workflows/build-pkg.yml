@@ -1,56 +1,41 @@
-name: CI - Build Release Packages
+name: Build PKG Installer + Uninstaller
 
 on:
   release:
-    types: [published]
+    types: [created]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-macos-pkg:
+  build-pkg:
     runs-on: macos-latest
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download Source from Release
+        uses: robinraju/release-downloader@v1
         with:
-          fetch-depth: 0
+          repository: ${{ github.repository }}
+          tag: ${{ github.event.release.tag_name }}
+          fileName: "*.zip"
+          out-file-path: ./downloaded
 
-      - name: Set Environment Variables
+      - name: Extract Source
         run: |
-          TAG_NAME="${{ github.event.release.tag_name || github.ref_name || 'v1.0.0' }}"
-          echo "RELEASE_VERSION=$TAG_NAME" >> $GITHUB_ENV
-          echo "RELEASE_VERSION_CLEAN=$(echo $TAG_NAME | sed 's/v//')" >> $GITHUB_ENV
+          mkdir -p ./source
+          unzip ./downloaded/*.zip -d ./source
 
-      - name: Fetch Release Body
+      - name: Run Build Script
         run: |
-          # ดึง Description จาก Release มาบันทึกเป็น HTML เพื่อใช้ใน Installer
-          gh release view ${{ env.RELEASE_VERSION }} --json body -q .body > ci_tooling/resources/welcome.txt || echo "OpenCore Legacy Patcher T2 Fix" > ci_tooling/resources/welcome.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          chmod +x ./ci_tooling/build_pkg.sh
+          ./ci_tooling/build_pkg.sh "${{ github.event.release.tag_name }}"
 
-      - name: Build Application (Optional)
-        run: |
-          # เรียกใช้ build script หลักของ OCLP เพื่อสร้าง .app ในโฟลเดอร์ dist/
-          /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 Build-Project.command --run-as-individual-steps --prepare-application || mkdir -p dist/OpenCore-Patcher.app
-
-      - name: Run Build Package Script
-        run: |
-          chmod +x ci_tooling/build_pkg.sh
-          ./ci_tooling/build_pkg.sh "${{ env.RELEASE_VERSION_CLEAN }}"
-
-      - name: Upload Assets to Release
+      - name: Upload PKGs to Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: |
-            dist/OpenCore-Patcher-T2-Installer-*.pkg
-            dist/OpenCore-Patcher-T2-Uninstaller-*.pkg
-            uninstall.sh
-          append_body: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Logging Success
-        run: |
-          echo "Build and Upload completed for version ${{ env.RELEASE_VERSION }}"
+            ./dist/*.pkg
