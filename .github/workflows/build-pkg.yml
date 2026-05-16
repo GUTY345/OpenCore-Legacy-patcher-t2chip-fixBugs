@@ -4,6 +4,11 @@ on:
   release:
     types: [created]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to build (leave empty = latest)'
+        required: false
+        default: 'latest'
 
 jobs:
   build-pkg:
@@ -15,13 +20,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Determine Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "TAG=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${{ inputs.tag_name || 'latest' }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Source from Release
         uses: robinraju/release-downloader@v1
         with:
           repository: ${{ github.repository }}
-          tag: ${{ github.event.release.tag_name }}
+          tag: ${{ steps.version.outputs.TAG }}
           fileName: "*.zip"
           out-file-path: ./downloaded
+          latest: ${{ steps.version.outputs.TAG == 'latest' }}
 
       - name: Extract Source
         run: |
@@ -31,11 +46,11 @@ jobs:
       - name: Run Build Script
         run: |
           chmod +x ./ci_tooling/build_pkg.sh
-          ./ci_tooling/build_pkg.sh "${{ github.event.release.tag_name }}"
+          ./ci_tooling/build_pkg.sh "${{ steps.version.outputs.TAG }}"
 
       - name: Upload PKGs to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ steps.version.outputs.TAG }}
           files: |
             ./dist/*.pkg
