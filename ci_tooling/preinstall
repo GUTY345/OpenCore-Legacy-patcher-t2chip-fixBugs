@@ -1,0 +1,15 @@
+#!/bin/bash
+
+echo "Uninstalling OpenCore Legacy Patcher T2 Fix..."
+
+# ลบ App และไฟล์สนับสนุน
+rm -rf "/Applications/OpenCore-Patcher.app"
+rm -rf "/Library/Application Support/Dortania/OpenCore-Patcher.app"
+
+# ลบ Privileged Helper (ถ้ามี)
+if [ -f "/Library/PrivilegedHelperTools/com.dortania.opencore-legacy-patcher.privileged-helper" ]; then
+    rm -f "/Library/PrivilegedHelperTools/com.dortania.opencore-legacy-patcher.privileged-helper"
+fi
+
+echo "Uninstallation complete."
+exit 0

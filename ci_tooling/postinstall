@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# สร้าง Symbolic Link ไปที่ /Applications เพื่อให้ User เรียกใช้งานง่าย
+APP_PATH="/Library/Application Support/Dortania/OpenCore-Patcher.app"
+LINK_PATH="/Applications/OpenCore-Patcher.app"
+
+if [ -d "$APP_PATH" ]; then
+    ln -sf "$APP_PATH" "$LINK_PATH"
+fi
+exit 0
