@@ -243,36 +243,30 @@ class BuildSecurity:
         self.config["Misc"]["Security"]["DmgLoading"]      = "Any"
         self.config["Misc"]["Security"]["ApECID"]          = 0
 
-        # amfi=0x80                        — disable AMFI enforcement
-        # amfi_check_dyld_policy_at_eval=0 — allow ASP init to complete before
-        #                                     dyld policy enforcement is disabled
-        # ipc_control_port_options=0       — fix Setup hanging / black screen
-        # -disable_sidecar_mac             — disable Sidecar USB VHCI enumeration
-        #                                     that causes AppleUSBVHCIPort to stall
-        #                                     on macOS Tahoe during early boot (T2)
-        # usbmuxd=0x3                      — restrict usbmuxd to prevent VHCI
-        #                                     controller from blocking IOService tree
+        # Bypassing SMBIOS spoofing for MacBookPro15,1 to fix Trust Cache mismatch
+        if self.model == "MacBookPro15,1":
+            logging.info("  > Forcing Native SMBIOS (MacBookPro15,1) to prevent Trust Cache mismatch")
+            for section in ["Generic", "SMBIOS", "DataHub"]:
+                if section in self.config["PlatformInfo"]:
+                    self.config["PlatformInfo"][section]["SystemProductName"] = "MacBookPro15,1"
+
+        # Cleaned-up Boot-args for stability
+        # -v                             — Verbose mode to debug Panics
+        # igfxonln=1                     — Force iGPU online for installer display
+        # amfi_get_out_of_my_way=1       — Full AMFI bypass for Tahoe root access
+        # ipc_control_port_options=0     — Critical T2 security stall fix
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "amfi=0x80")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "amfi_check_dyld_policy_at_eval=0")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "amfi_get_out_of_my_way=1")
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "ipc_control_port_options=0")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "-v")
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "igfxonln=1")
+
+        # Legacy / Secondary boot-args
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "-disable_sidecar_mac")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "usbmuxd=0x3")
-        # nvme_shutdown_timestamp=0 — prevent nx_mount from waiting on
-        # NVMe checkpoint timestamp during APFS device_handle init,
+        self._update_nvram_string(apple_nvram_uuid, "boot-args", "amfi_check_dyld_policy_at_eval=0")
         # resolving stall at dev_init:303 on macOS Tahoe (T2 ONLY)
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "nvme_shutdown_timestamp=0")
-        # UI Stall Fixes for MacBookPro15,1 and similar
-        logging.info("  > Adding UI Stall fix boot-args: igfxonln=1, forceRenderStandby=0")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "igfxonln=1")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "igfxnoredir=1")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "forceRenderStandby=0")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "-disable_media_analysis")
-        # keepsyms=1             — retain kernel symbols so nx_mount journal
-        #                          replay can complete without I/O stall at xid
-        # apfs_nvidia_restrict=0 — disable APFS GPU restriction check that
-        #                          causes checkpoint confirmation to hang (T2)
         self._update_nvram_string(apple_nvram_uuid, "boot-args", "keepsyms=1")
-        self._update_nvram_string(apple_nvram_uuid, "boot-args", "apfs_nvidia_restrict=0")
 
         logging.info("  > T2 memory descriptor overrides applied")
 
@@ -282,6 +276,7 @@ class BuildSecurity:
         - USB/Mouse handshake stall
         - IOBufferCopyController timeout panic
         - AppleSEPManager SEPOS kernel panic
+        - AppleGFX Conflict (dGPU Disable)
         - AppleIntelUSBXHC Timeout (0x0A -> 0xFF)
         """
         if not self._is_t2_mac():
@@ -336,7 +331,21 @@ class BuildSecurity:
                 "MinKernel": "25.0.0"
             })
 
-        # 4. Patch AppleSEPManager to change panic to return
+        # 4. Disable AppleGFX to prevent dGPU conflict during boot
+        # Specific to MacBookPro15,1/16,1 hybrid graphics models
+        if not patch_exists("Disable AppleGFX dGPU (Tahoe fix)"):
+            logging.info("  > Adding AppleGFX disable patch")
+            kernel_patches.append({
+                "Arch": "x86_64",
+                "Comment": "Disable AppleGFX dGPU (Tahoe fix)",
+                "Enabled": True,
+                "Identifier": "com.apple.driver.AppleGFX",
+                "Find": binascii.unhexlify("554889E5"),
+                "Replace": binascii.unhexlify("31C0C390"),
+                "MinKernel": "25.0.0"
+            })
+
+        # 5. Patch AppleSEPManager to change panic to return
         # Resolves SEPOS kernel panic during initialization
         if not patch_exists("Patch AppleSEPManager panic to return (Tahoe fix)"):
             kernel_patches.append({
@@ -345,11 +354,11 @@ class BuildSecurity:
                 "Enabled": True,
                 "Identifier": "com.apple.driver.AppleSEPManager",
                 "Find": binascii.unhexlify("4883BFB003000000754F"),   # Check SEPOS status
-                "Replace": binascii.unhexlify("31C0C390909090909090"),# Return Success (0) ทันที
+                "Replace": binascii.unhexlify("31C0C390909090909090"),# Return Success (0)
                 "MinKernel": "25.0.0"                                 # Target macOS 26 (Tahoe)
             })
 
-        # 6. Bypass InternalHubPowerCheck ใน AppleIntelUSBXHC
+        # 6. Bypass InternalHubPowerCheck in AppleIntelUSBXHC
         # ป้องกันระบบค้างรอสถานะการจ่ายไฟของ USB Hub บนชิป T2
         if not patch_exists("Bypass InternalHubPowerCheck (Tahoe fix)"):
             logging.info("  > Adding InternalHubPowerCheck bypass patch")
