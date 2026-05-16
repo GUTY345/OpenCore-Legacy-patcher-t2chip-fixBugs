@@ -26,6 +26,7 @@ jobs:
           # 1. Establish the virtual directory structure
           PAYLOAD_BIN="payload/usr/local/bin"
           PAYLOAD_APP_SUPPORT="payload/Library/Application Support/OCLP-Tahoe"
+          mkdir -p dist
           
           mkdir -p "$PAYLOAD_BIN"
           mkdir -p "$PAYLOAD_APP_SUPPORT/uninstall"
@@ -58,23 +59,33 @@ jobs:
           chmod +x "$PAYLOAD_APP_SUPPORT/uninstall/uninstall.sh"
 
           # 5. Extract standalone uninstaller for artifact export
-          cp "$PAYLOAD_APP_SUPPORT/uninstall/uninstall.sh" ./uninstall.sh
+          cp "$PAYLOAD_APP_SUPPORT/uninstall/uninstall.sh" dist/uninstall.sh
 
       - name: Compile macOS Package
         run: |
           pkgbuild --root payload \
                    --identifier com.mathachai.oclp.tahoe \
                    --install-location / \
-                   OCLP-Tahoe-Installer.pkg
+                   dist/OCLP-Tahoe-Installer.pkg
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OCLP-Tahoe-Installation-Package
-          path: OCLP-Tahoe-Installer.pkg
+          path: dist/OCLP-Tahoe-Installer.pkg
 
       - name: Upload Uninstaller Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OCLP-Tahoe-Uninstaller
-          path: uninstall.sh
+          path: dist/uninstall.sh
+
+      - name: Automatically Deploy Artifacts to Current Target Release Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.pkg
+            dist/uninstall.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
