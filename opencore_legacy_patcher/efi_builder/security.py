@@ -230,28 +230,36 @@ class BuildSecurity:
 
     def _apply_t2_graphics_injection(self) -> None:
         """
-        Inject connector-less Intel UHD 630 DeviceProperties for T2 Mac
-        models listed in _T2_UHD630_MODELS.
+        Inject connector-less Intel iGPU DeviceProperties for T2 Macs.
 
-        WHY connector-less ig-platform-id 0x3E9B0006 (bytes: 06 00 9B 3E)?
-        -------------------------------------------------------------------        
+        WHY connector-less ig-platform-id?
+        -----------------------------------
         macOS Tahoe changed the ordering of APFS volume group initialization
         relative to GPU framebuffer enumeration. With a display-connected
-        ig-platform-id (e.g., bytes: 00 00 9B 3E = 0x3E9B0000), the Intel
-        framebuffer driver probes all connectors during early boot, stalling
-        the IOService tree long enough that APFS fails with:
-
+        ig-platform-id, the Intel framebuffer driver probes all connectors
+        during early boot, stalling the IOService tree long enough that APFS
+        fails with:
             nx_get_volume_group:669  - volume groups tree is not set up yet
             getVolumeGroupMountFrom:10003 - failed with error 2
 
-        Using ig-platform-id 0x3E9B0006 (bytes: 06 00 9B 3E) tells
-        AppleIntelCFLGraphicsFramebuffer to skip connector enumeration at
-        boot, allowing APFS volume groups to mount before the GPU resumes
-        display initialization.
+        Using a connector-less platform-id tells the framebuffer driver to
+        skip connector enumeration at boot, allowing APFS volume groups to
+        mount before the GPU resumes display initialization.
 
-        Non-T2 Macs are never affected—this method is only reachable
-        when _is_t2_mac() is True AND the the model is in _T2_UHD630_MODELS
-        or _T2_UHD617_MODELS.
+        GPU families handled:
+        ─────────────────────────────────────────────────────────────────────
+        UHD 630  (Coffee Lake GT2, 0x3E9B)  — MBP15,1 / 15,3 / 16,1 / 16,4
+                                               Mac mini 8,1
+          connector-less id: 0x3E9B0006  (bytes LE: 06 00 9B 3E)
+
+        UHD 617  (Amber Lake GT3e, 0x3EA5)  — MacBook Air 8,1 / 8,2 / 9,1
+                                               MBP16,2 / 16,3
+          connector-less id: 0x3EA50009  (bytes LE: 09 00 A5 3E)
+          Grey screen fix: igfxonln=1 + igfxfw=2 + igfxgl=1 + igfxmetal=1
+
+        Iris Plus 655 (Coffee Lake-U GT3, 0x3EA5) — MBP15,2 / 15,4
+          Same silicon as UHD 617 — uses identical connector-less id.
+        ─────────────────────────────────────────────────────────────────────
         """
         if self._should_skip_t2_graphics_injection():
             logging.info(f"- Skipping Intel graphics injection for {self.model} (no iGPU or not required)")
@@ -260,8 +268,6 @@ class BuildSecurity:
         if not self._requires_t2_graphics_injection():
             logging.info(f"- Skipping Intel graphics injection for {self.model} (not in supported iGPU list)")
             return
-
-        logging.info(f"- {self.model}: Injecting connector-less UHD630 DeviceProperties (Tahoe fix)")
 
         if "DeviceProperties" not in self.config:
             self.config["DeviceProperties"] = {}
@@ -272,45 +278,49 @@ class BuildSecurity:
         if graphics_path not in self.config["DeviceProperties"]["Add"]:
             self.config["DeviceProperties"]["Add"][graphics_path] = {}
 
-        gfx = self.config["DeviceProperties"]["Add"][graphics_path]
-
-        # Ensure the nested DeviceProperties structure exists safely
         self._ensure_path("DeviceProperties", "Add", graphics_path)
         gfx = self.config["DeviceProperties"]["Add"][graphics_path]
 
-        if self.model in _T2_IRIS_PLUS_MODELS:
-            # v1.0.6: Intel Iris Plus (Coffee Lake-U GT3)
-            # Using platform 0x3EA50009 (Connector-less) to fix Tahoe devfs stall.
-            # Little-endian: 09 00 A5 3E
-            if "AAPL,ig-platform-id" not in gfx:
-                logging.info("  > Injecting AAPL,ig-platform-id: 0900A53E (Iris Plus U-series)")
-                gfx["AAPL,ig-platform-id"] = binascii.unhexlify("0900A53E")
-                logging.info("  > device-id = A5 3E 00 00")
-                gfx["device-id"] = binascii.unhexlify("A53E0000")
+        # ── UHD 617 / Iris Plus 655 (Amber Lake GT3e, 0x3EA5) ────────────
+        # MacBook Air 8,1 / 8,2 / 9,1  and  MacBook Pro 15,2 / 15,4 / 16,2 / 16,3
+        # Grey screen on these models is caused by the framebuffer driver
+        # trying to enumerate eDP connectors before APFS is ready.
+        # Connector-less platform 0x3EA50009 skips that enumeration.
+        # igfxgl=1  — force OpenGL renderer (avoids Metal init stall on grey screen)
+        # igfxmetal=1 — allow Metal on connector-less platform
+        if self.model in _T2_UHD617_MODELS or self.model in _T2_IRIS_PLUS_MODELS:
+            logging.info(f"- {self.model}: Injecting connector-less UHD617/Iris Plus DeviceProperties (Tahoe fix)")
+            gfx["AAPL,ig-platform-id"] = binascii.unhexlify("0900A53E")  # 0x3EA50009 LE
+            gfx["device-id"]           = binascii.unhexlify("A53E0000")  # 0x3EA50000 LE
+            logging.info("  > ig-platform-id = 0x3EA50009 (connector-less Amber Lake GT3e)")
+            logging.info("  > device-id      = 0x3EA50000")
+
+            # UHD 617-specific boot-args to fix grey screen
+            # igfxgl=1     — force OpenGL path, avoids Metal framebuffer stall
+            # igfxmetal=1  — enable Metal on connector-less platform
+            # igfxonln=1   — keep iGPU online through sleep/wake
+            APPLE_NVRAM_UUID = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxgl=1")
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxmetal=1")
+            logging.info("  > Added igfxgl=1 igfxmetal=1 (UHD617 grey screen fix)")
+
+        # ── UHD 630 (Coffee Lake GT2, 0x3E9B) ────────────────────────────
+        # MacBook Pro 15,1 / 15,3 / 16,1 / 16,4  and  Mac mini 8,1
         else:
-            # Branch for Coffee Lake GT2 (UHD 630 / 15-inch / Mac mini)
-            # little-endian bytes: 06 00 9B 3E → platform 0x3E9B0006
-            if "AAPL,ig-platform-id" not in gfx:
-                gfx["AAPL,ig-platform-id"] = binascii.unhexlify("06009B3E")
-            logging.info("  > device-id = 9B 3E 00 00")
-            gfx["device-id"] = binascii.unhexlify("9B3E0000")
+            logging.info(f"- {self.model}: Injecting connector-less UHD630 DeviceProperties (Tahoe fix)")
+            gfx["AAPL,ig-platform-id"] = binascii.unhexlify("06009B3E")  # 0x3E9B0006 LE
+            gfx["device-id"]           = binascii.unhexlify("9B3E0000")  # 0x3E9B0000 LE
+            logging.info("  > ig-platform-id = 0x3E9B0006 (connector-less Coffee Lake GT2)")
+            logging.info("  > device-id      = 0x3E9B0000")
 
-        # Required for any framebuffer-* patch keys to take effect
-        logging.info("  > framebuffer-patch-enable = 1")
+        # ── Common framebuffer patches (all T2 iGPU models) ──────────────
         gfx["framebuffer-patch-enable"] = binascii.unhexlify("01000000")
-
-        # Mark connector 0 as unused (type 0x4 = VGA/unused) so the driver
-        # skips hotplug detection before APFS is ready.
-        logging.info("  > framebuffer-con0-enable = 1, con0-type = 04 (unused/connector-less)")
-        gfx["framebuffer-con0-enable"] = binascii.unhexlify("01000000")
-        gfx["framebuffer-con0-type"]   = binascii.unhexlify("00040000")
-
-        # เพิ่มหน่วยความจำกราฟิกเพื่อป้องกัน UI Stall ในหน้า Recovery
-        logging.info("  > framebuffer-stolenmem = 19MB, framebuffer-fbmem = 9MB")
-        gfx["framebuffer-stolenmem"]   = binascii.unhexlify("00003001")
-        gfx["framebuffer-fbmem"]       = binascii.unhexlify("00009000")
-
-        logging.info("  > T2 UHD630 connector-less injection complete")
+        gfx["framebuffer-con0-enable"]  = binascii.unhexlify("01000000")
+        gfx["framebuffer-con0-type"]    = binascii.unhexlify("00040000")  # 0x4 = unused/connector-less
+        gfx["framebuffer-stolenmem"]    = binascii.unhexlify("00003001")  # 19 MB
+        gfx["framebuffer-fbmem"]        = binascii.unhexlify("00009000")  # 9 MB
+        logging.info("  > framebuffer-patch-enable=1, con0-type=unused, stolenmem=19MB, fbmem=9MB")
+        logging.info("  > T2 iGPU connector-less injection complete")
 
     def _apply_t2_memory_descriptor_overrides(self, apple_nvram_uuid: str) -> None:
         """
@@ -584,8 +594,9 @@ class BuildSecurity:
             self.config["Misc"]["Security"]["DmgLoading"]      = "Any"
 
             self._apply_t2_amfi_boot_args(APPLE_NVRAM_UUID)
-            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxonln=1")             # Force UHD 630 online to prevent UI stall
-            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxnoredir=1")         # Fix white/frozen screen on 15,1
+            self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxonln=1")             # Force iGPU online to prevent UI stall
+            if self.model in _T2_UHD630_MODELS:
+                self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "igfxnoredir=1")     # Fix white/frozen screen on UHD 630 models only
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "forceRenderStandby=0")    # Prevent GPU power saving UI hang
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-disable_media_analysis") # Reduce background processing
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "agdpmod=vit9696")         # Disable board ID checks
