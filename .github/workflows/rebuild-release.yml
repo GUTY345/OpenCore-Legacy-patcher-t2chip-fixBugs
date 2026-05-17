@@ -11,10 +11,15 @@ on:
         required: true
         type: string
 
+# Only allow one rebuild job at a time — prevents macOS runner queue stacking
+concurrency:
+  group: rebuild-release
+  cancel-in-progress: false
+
 jobs:
   rebuild:
     name: Rebuild PKGs for ${{ github.event.inputs.tag }}
-    runs-on: macos-14
+    runs-on: macos-13
     timeout-minutes: 150
     permissions:
       contents: write

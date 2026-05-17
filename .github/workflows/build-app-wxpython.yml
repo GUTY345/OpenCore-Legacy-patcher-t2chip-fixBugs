@@ -15,10 +15,15 @@ on:
 jobs:
   build:
     name: Build wxPython
-    runs-on: macos-14
+    runs-on: macos-13
     timeout-minutes: 120
     permissions:
       contents: write
+
+    # Only one build at a time — prevents macOS runner queue stacking on free tier
+    concurrency:
+      group: build-wxpython-${{ github.ref }}
+      cancel-in-progress: true
 
     env:
       branch: ${{ github.ref }}
