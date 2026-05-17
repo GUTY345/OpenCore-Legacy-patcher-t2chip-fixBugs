@@ -223,11 +223,18 @@ class MainFrame(wx.Frame):
         )
         self.spoof_label = spoof_lbl
 
+        # Security chip label
+        chip_str, chip_colour = self._get_chip_label()
+        chip_lbl = wx.StaticText(hdr, label=chip_str)
+        chip_lbl.SetFont(gui_support.font_factory(11, wx.FONTWEIGHT_BOLD))
+        chip_lbl.SetForegroundColour(chip_colour)
+
         txt.Add(app_name,  flag=wx.BOTTOM, border=2)
         txt.Add(tagline,   flag=wx.BOTTOM, border=8)
         txt.Add(ver_row,   flag=wx.BOTTOM, border=3)
         txt.Add(model_lbl, flag=wx.BOTTOM, border=2)
-        txt.Add(spoof_lbl)
+        txt.Add(spoof_lbl, flag=wx.BOTTOM, border=2)
+        txt.Add(chip_lbl)
 
         hdr_sizer.Add(txt, proportion=1,
                       flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, border=20)
@@ -399,6 +406,28 @@ class MainFrame(wx.Frame):
             return f"Spoofing: {target}"
         except Exception:
             return "Spoofing: Unknown"
+
+    def _get_chip_label(self) -> tuple:
+        """
+        Detect the security chip in the current Mac and return
+        a (label_string, colour) tuple for display in the header.
+
+        Detection logic:
+        - T2: model is in model_array.T2Macs
+        - T1: computer.t1_chip is True (detected via USB device probe)
+        - None: neither T1 nor T2
+        """
+        from ..datasets import model_array
+
+        real_model = self.constants.custom_model or self.constants.computer.real_model
+
+        if real_model in model_array.T2Macs:
+            return ("Chip: Apple T2 Security Chip", wx.Colour(100, 210, 255))   # cyan-blue
+
+        if getattr(self.constants.computer, "t1_chip", False):
+            return ("Chip: Apple T1 Security Chip", wx.Colour(120, 220, 140))   # green
+
+        return ("Chip: No T1 / T2 Security Chip", wx.Colour(110, 110, 118))     # grey
 
     def _preflight_checks(self):
         try:
@@ -638,20 +667,3 @@ Please check the Github page for more information about this release."""
         import webbrowser
         logging.info("- Launching Gemini AI Assistant in default browser")
         webbrowser.open('https://gemini.google.com')
-        return
-        
-        logging.info("- Launching Gemini AI Assistant (pywebview)")
-        
-        # Create a sleek, floating window
-        window = webview.create_window(
-            title='Gemini AI Assistant',
-            url='https://gemini.google.com',
-            width=500,
-            height=850,
-            confirm_close=False,
-            background_color='#ffffff'
-        )
-        
-        # start() is blocking by default, but in a wxPython app, 
-        # it usually needs to run in its own flow.
-        webview.start()
