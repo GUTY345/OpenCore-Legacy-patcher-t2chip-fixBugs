@@ -36,12 +36,15 @@ _T2_IRIS_PLUS_MODELS = {
 }
 
 # T2 Mac models that use Intel UHD 617 and require graphics injection for stability.
+# NOTE: MacBookPro16,2 is intentionally excluded — it uses Ice Lake GT2 (Iris Plus,
+# device 0x8A52) which is natively supported by macOS Tahoe. Injecting Amber Lake
+# platform-id (0x3EA50009) on Ice Lake hardware causes GPU failures / kernel panics.
 _T2_UHD617_MODELS = {
     "MacBookAir8,1",   # Air 2018
     "MacBookAir8,2",   # Air 2019
     "MacBookAir9,1",   # Air 2020 Intel
-    "MacBookPro16,2",  # 13-inch 2020 (4 TB3)
-    "MacBookPro16,3",  # 13-inch 2020 (2 TB3)
+    "MacBookPro16,3",  # 13-inch 2020 (2 TB3) — Amber Lake UHD 617
+    # MacBookPro16,2 excluded: Ice Lake GT2 (Iris Plus 0x8A52) — natively supported by Tahoe
 }
 
 # T2 Mac models that do not have an Intel iGPU, or where iGPU injection

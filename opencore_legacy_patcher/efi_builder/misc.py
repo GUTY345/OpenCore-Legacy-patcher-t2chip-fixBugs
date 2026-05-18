@@ -455,7 +455,8 @@ class BuildMiscellaneous:
         if self.model not in [
             "MacBookAir8,1", "MacBookAir8,2", "MacBookAir9,1",
             "MacBookPro15,1", "MacBookPro15,2", "MacBookPro15,3", "MacBookPro15,4",
-            "MacBookPro16,1", "MacBookPro16,2", "MacBookPro16,3", "MacBookPro16,4",
+            "MacBookPro16,1", "MacBookPro16,3", "MacBookPro16,4",
+            # MacBookPro16,2 excluded: Ice Lake — natively supported by macOS Tahoe
             "Macmini8,1",
             "iMac19,1", "iMac19,2", "iMac20,1", "iMac20,2",
             "iMacPro1,1",

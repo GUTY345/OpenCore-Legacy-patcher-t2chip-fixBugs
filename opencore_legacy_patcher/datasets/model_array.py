@@ -385,7 +385,7 @@ T2Macs = [
     "MacBookPro15,3",
     "MacBookPro15,4",
     "MacBookPro16,1",
-    "MacBookPro16,2",
+    # "MacBookPro16,2" — Ice Lake GT2, natively supported by macOS Tahoe, no OCLP patches needed
     "MacBookPro16,3",
     "MacBookPro16,4",
     "Macmini8,1",
